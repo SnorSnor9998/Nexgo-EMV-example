@@ -36,6 +36,7 @@ open class EMVCallback2 : OnEmvProcessListener2 {
 
     override fun onPrompt(p0: PromptEnum?) {
         Log.e("dd--", "onPrompt")
+        Log.e("dd--",p0.toString())
     }
 
     override fun onRemoveCard() {

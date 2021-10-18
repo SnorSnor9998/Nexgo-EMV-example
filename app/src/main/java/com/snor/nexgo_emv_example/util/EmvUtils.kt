@@ -1,37 +1,89 @@
 package com.snor.nexgo_emv_example.util
 
 import android.content.Context
+import android.util.Log
 import com.google.gson.Gson
-import com.google.gson.JsonArray
-import com.google.gson.JsonElement
 import com.google.gson.JsonParser
+import com.nexgo.libpboc.ByteUtils
 import com.nexgo.oaf.apiv3.emv.AidEntity
 import com.nexgo.oaf.apiv3.emv.CapkEntity
+import com.nexgo.oaf.apiv3.emv.EmvHandler2
 import java.io.IOException
 import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.util.ArrayList
 
-class EmvUtils(private val context : Context) {
+class EmvUtils(private val emvHandler: EmvHandler2, private val context: Context) {
 
-    fun getAidList(): List<AidEntity>? {
+    fun init(){
+        initEmvAid()
+        initEmvCapk()
+        initTerminalConfig()
+    }
+
+    private fun initEmvAid(){
+        emvHandler.delAllAid()
+
         val aidEntityList: MutableList<AidEntity> = ArrayList()
-        val ja = JsonParser.parseString(readAssetsTxt("inbas_aid.json")).asJsonArray ?: return null
+        val ja = JsonParser.parseString(readAssetsTxt("inbas_aid.json")).asJsonArray
         ja.forEach {
             val userBean = Gson().fromJson(it, AidEntity::class.java)
             aidEntityList.add(userBean)
         }
-        return aidEntityList
+
+        if (aidEntityList.isNullOrEmpty()) {
+            Log.e("dd--", "initAID failed")
+            return
+        }
+        emvHandler.setAidParaList(aidEntityList)
     }
 
-    fun getCapkList(): List<CapkEntity>? {
+
+
+    private fun initEmvCapk() {
+        emvHandler.delAllCapk()
+
         val capkEntityList: MutableList<CapkEntity> = ArrayList()
-        val ja = JsonParser.parseString(readAssetsTxt("inbas_capk.json")).asJsonArray ?: return null
+        val ja = JsonParser.parseString(readAssetsTxt("inbas_capk.json")).asJsonArray
         ja.forEach {
             val userBean = Gson().fromJson(it, CapkEntity::class.java)
             capkEntityList.add(userBean)
         }
-        return capkEntityList
+
+        if (capkEntityList.isNullOrEmpty()) {
+            Log.e("dd--", "initCAPK failed")
+            return
+        }
+        emvHandler.setCAPKList(capkEntityList)
+    }
+
+
+    private fun initTerminalConfig(){
+        Log.e("dd--","initTerminalConfig")
+        //9F1A, 5F2A, 9F3C, 9F33
+        val b : ByteArray = ByteUtils.hexString2ByteArray("9F1A0204585F2A0204589F3C0204589F3303E0F8C8")
+        emvHandler.initTermConfig(b)
+
+        //Terminal Capabilities
+        var tag: ByteArray = ByteUtils.hexString2ByteArray("9F33")
+        var value: ByteArray = ByteUtils.hexString2ByteArray("E060C8")
+        emvHandler.setTlv(tag,value)
+
+        //Terminal Transaction Qualifiers (TTQ)
+        tag = ByteUtils.hexString2ByteArray("9F66")
+        value = ByteUtils.hexString2ByteArray("3600C000")
+        emvHandler.setTlv(tag,value)
+
+        //Additional Terminal Capabilities (ATC)
+        tag = ByteUtils.hexString2ByteArray("9F40")
+        value = ByteUtils.hexString2ByteArray("6100D0B001")
+        emvHandler.setTlv(tag,value)
+
+        //PIN Try Limit
+        tag = ByteUtils.hexString2ByteArray("DF03")
+        value = ByteUtils.hexString2ByteArray("FA03")
+        emvHandler.setTlv(tag,value)
+
     }
 
 

@@ -19,11 +19,12 @@ import com.snor.nexgo_emv_example.Callback.CheckCardCallback
 import com.snor.nexgo_emv_example.Callback.EMVCallback2
 import com.snor.nexgo_emv_example.Callback.PinPadCallback
 import com.snor.nexgo_emv_example.databinding.ActivityMainBinding
-import com.snor.nexgo_emv_example.util.EmvUtils
 import java.lang.StringBuilder
 import java.text.SimpleDateFormat
 import java.util.*
 import com.nexgo.oaf.apiv3.device.pinpad.PinKeyboardModeEnum
+import com.snor.nexgo_emv_example.util.EmvUtils
+import java.nio.charset.StandardCharsets
 
 
 class MainActivity : AppCompatActivity() {
@@ -34,10 +35,14 @@ class MainActivity : AppCompatActivity() {
     private var emvHandler: EmvHandler2? = null
     private var sdkPinPad: PinPad? = null
 
-    private var mExistSlot: CardSlotTypeEnum? = null
+    private var emvUtils : EmvUtils?= null
+
+
+    private var mCardType: CardSlotTypeEnum? = null
     private var mCardNo: String = ""
-    private var mCardType = 0
     private var mPinType: Boolean? = null
+
+    private var amount = "30000" //RM 300.00
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,8 +54,9 @@ class MainActivity : AppCompatActivity() {
         sdkPinPad = deviceEngine!!.pinPad
         emvHandler!!.emvDebugLog(true)
 
-        initEmvAid()
-        initEmvCapk()
+        //Init
+        emvUtils = EmvUtils(emvHandler!!,this)
+        emvUtils!!.init()
 
         binding.btnStart.setOnClickListener {
             checkCard()
@@ -58,27 +64,6 @@ class MainActivity : AppCompatActivity() {
 
 
     }
-
-    private fun initEmvAid() {
-        emvHandler!!.delAllAid()
-        val list = EmvUtils(this).getAidList()
-        if (list.isNullOrEmpty()) {
-            Log.e("dd--", "initAID failed")
-            return
-        }
-        emvHandler!!.setAidParaList(list)
-    }
-
-    private fun initEmvCapk() {
-        emvHandler!!.delAllCapk()
-        val list = EmvUtils(this).getAidList()
-        if (list.isNullOrEmpty()) {
-            Log.e("dd--", "initCAPK failed")
-            return
-        }
-        emvHandler!!.setCAPKList(list)
-    }
-
 
     private fun checkCard() {
         Log.e("dd--", "_startEMVTest")
@@ -96,7 +81,6 @@ class MainActivity : AppCompatActivity() {
         cardReader.searchCard(slotTypes, 60, mCheckCardCallback)
     }
 
-
     private val mCheckCardCallback = object : CheckCardCallback() {
         override fun onCardInfo(p0: Int, p1: CardInfoEntity?) {
             super.onCardInfo(p0, p1)
@@ -106,26 +90,17 @@ class MainActivity : AppCompatActivity() {
             //Check if return code is success, and the returned cardInfo object is not null
             if (p0 == SdkResult.Success && p1 != null) {
 
-                mExistSlot = p1.cardExistslot
-
-                if (p1.cardExistslot == CardSlotTypeEnum.RF) {
-                    val m1 = deviceEngine!!.m1CardHandler
-                    val uid = m1.readUid()
-                    Log.e("dd--", "UID : $uid")
-                    Log.e("dd--", "RF Type : ${p1.rfCardType}")
-                }
-
+                mCardType = p1.cardExistslot
 
 
                 //success and cardInfo is not null
                 val transData = EmvTransConfigurationEntity()
-                transData.transAmount = leftPad("100", 12, '0')
+                transData.transAmount = leftPad(amount, 12, '0')
                 transData.termId = "00000001" //Set the terminalid
                 transData.merId = "000000000000001" //Set the merchantid
                 transData.emvTransType = 0x00.toByte()
-                transData.isContactForceOnline = false
-                transData.countryCode = "458"
-                transData.currencyCode = "458"
+                transData.traceNo = "00000000" //set the traceno
+
 
                 transData.transDate =
                     SimpleDateFormat(
@@ -137,7 +112,7 @@ class MainActivity : AppCompatActivity() {
                         "hhmmss",
                         Locale.getDefault()
                     ).format(Date()) //set the trans time
-                transData.traceNo = "00000000" //set the traceno
+
 
                 transData.emvProcessFlowEnum = EmvProcessFlowEnum.EMV_PROCESS_FLOW_STANDARD
                 if (p1.cardExistslot == CardSlotTypeEnum.RF) {
@@ -151,12 +126,8 @@ class MainActivity : AppCompatActivity() {
                 emvHandler!!.emvProcess(transData, mEMVCallback)
 
             }
-
-
         }
     }
-
-
 
     private val mEMVCallback = object : EMVCallback2() {
 
@@ -166,28 +137,23 @@ class MainActivity : AppCompatActivity() {
             val raw: ByteArray =
                 emvHandler!!.getTlv(byteArrayOf(0x4F), EmvDataSourceEnum.FROM_KERNEL)
             val aid = ByteUtils.byteArray2HexString(raw)
-            Log.e("dd--","aid: $aid")
 
-            if (mExistSlot == CardSlotTypeEnum.RF) {
+            if (mCardType == CardSlotTypeEnum.RF) {
                 if (raw.isNotEmpty()) {
                     val isVisa = aid.startsWith("A000000003")
                     val isMaster = (aid.startsWith("A000000004") || aid.startsWith("A000000005"))
 
-                    if (isVisa){
+                    if (isVisa) {
                         // VISA(PayWave)
                         Log.e("dd--", "detect VISA card")
-                    }else if(isMaster){
+                    } else if (isMaster) {
                         // MasterCard(PayPass)
                         Log.e("dd--", "detect MasterCard card")
-                        configPaypassParameter(raw)
+                        initPayPassConfig()
                     }
-
-
                 }
             }
-
             emvHandler!!.onSetTransInitBeforeGPOResponse(true)
-
         }
 
         override fun onSelApp(
@@ -216,6 +182,9 @@ class MainActivity : AppCompatActivity() {
             if (p0 != null) {
                 Log.e("dd--", "onConfirmCardNo " + p0.tk2)
                 Log.e("dd--", "onConfirmCardNo " + p0.cardNo)
+                Log.e("dd--", "onConfirmCardNo " + p0.expiredDate)
+                Log.e("dd--", "onConfirmCardNo " + p0.serviceCode)
+                Log.e("dd--", "onConfirmCardNo " + p0.csn)
                 mCardNo = p0.cardNo
             }
 
@@ -250,6 +219,7 @@ class MainActivity : AppCompatActivity() {
             // 8a = tag, 02 = len, 3030 = value
             emvOnlineResult.recvField55 = null
             emvHandler!!.onSetOnlineProcResponse(SdkResult.Success, emvOnlineResult)
+
         }
 
         override fun onRemoveCard() {
@@ -260,52 +230,20 @@ class MainActivity : AppCompatActivity() {
         override fun onFinish(p0: Int, p1: EmvProcessResultEntity?) {
             super.onFinish(p0, p1)
 
-            Log.d("dd--","Result : $p0")
+            Log.e("dd--", "Result : $p0")
+
+            if (p1 != null){
+                val cc = ByteUtils.byteArray2HexString(p1.currencyCode)
+                val sr = ByteUtils.byteArray2HexString(p1.scriptResult)
+                Log.e("dd--","currencyCode: $cc")
+                Log.e("dd--","scriptResult: $sr")
+            }
+
             emvHandler!!.emvProcessCancel()
         }
 
     }
 
-    private fun configPaypassParameter(aid: ByteArray) {
-        //kernel configuration, enable RRP and cdcvm
-        emvHandler!!.setTlv(
-            byteArrayOf(0xDF.toByte(), 0x81.toByte(), 0x1B.toByte()),
-            byteArrayOf(0x30.toByte())
-        )
-
-        //EMV MODE :amount >contactless cvm limit, set 60 = online pin and signature
-        emvHandler!!.setTlv(
-            byteArrayOf(0xDF.toByte(), 0x81.toByte(), 0x18.toByte()),
-            byteArrayOf(0x60.toByte())
-        )
-        //EMV mode :amount < contactless cvm limit, set 08 = no cvm
-        emvHandler!!.setTlv(
-            byteArrayOf(0xDF.toByte(), 0x81.toByte(), 0x19.toByte()),
-            byteArrayOf(0x08.toByte())
-        )
-        if (ByteUtils.byteArray2HexString(aid).uppercase().contains("A0000000043060")) {
-            Log.e("dd--", "======maestro===== ")
-            //maestro only support online pin
-            emvHandler!!.setTlv(
-                byteArrayOf(0x9F.toByte(), 0x33.toByte()), byteArrayOf(
-                    0xE0.toByte(),
-                    0x40.toByte(), 0xC8.toByte()
-                )
-            )
-            emvHandler!!.setTlv(
-                byteArrayOf(0xDF.toByte(), 0x81.toByte(), 0x18.toByte()), byteArrayOf(
-                    0x40.toByte()
-                )
-            )
-            emvHandler!!.setTlv(
-                byteArrayOf(0xDF.toByte(), 0x81.toByte(), 0x19.toByte()), byteArrayOf(
-                    0x08.toByte()
-                )
-            )
-        }
-
-
-    }
 
     private fun leftPad(amountStr: String, size: Int, padChar: Char): String {
         Log.e("dd--", "Enter leftPad()")
@@ -332,6 +270,9 @@ class MainActivity : AppCompatActivity() {
             }
 
             val pinL = intArrayOf(0x00, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c)
+
+            //inputOnlinePin parameter:
+            //pinLen - timeout - panBlock - mKeyId (DUKPT 0-19) - pinAlgMode - listener
             sdkPinPad!!.inputOnlinePin(
                 pinL,
                 60,
@@ -340,9 +281,9 @@ class MainActivity : AppCompatActivity() {
                 PinAlgorithmModeEnum.ISO9564FMT1,
                 mPinPadCallback
             )
-        }else{
+        } else {
             val pinL = intArrayOf(0x00, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c)
-            sdkPinPad!!.inputOfflinePin(pinL,60,mPinPadCallback)
+            sdkPinPad!!.inputOfflinePin(pinL, 60, mPinPadCallback)
         }
 
     }
@@ -351,13 +292,11 @@ class MainActivity : AppCompatActivity() {
         override fun onInputResult(p0: Int, p1: ByteArray?) {
             super.onInputResult(p0, p1)
 
-            Log.e(
-                "dd--",
-                "Enter onInputResult() : retCode$p0"
-            )
-            Log.e(
-                "dd--",
-                "Encrypted Pin Block (EPB) = " + ByteUtils.byteArray2HexStringWithSpace(p1)
+
+            Log.e("dd--", "Enter onInputResult() : retCode$p0")
+
+            Log.e("dd--",
+                "Encrypted Pin Block (EPB) = " + ByteUtils.byteArray2HexString(p1)
             )
 
             if (p0 == SdkResult.Success || p0 == SdkResult.PinPad_No_Pin_Input || p0 == SdkResult.PinPad_Input_Cancel) {
@@ -381,6 +320,50 @@ class MainActivity : AppCompatActivity() {
             super.onSendKey(p0)
         }
 
+    }
+
+
+    private fun initPayPassConfig(){
+        Log.e("dd--","initPayPassConfig")
+
+        val tag : Array<String> = arrayOf(
+            "DF8117","DF8118","DF811B","DF811D","DF811E","DF811F",
+            "DF8120","DF8121","DF8122",
+            "DF8123","DF8124","DF8125"
+        )
+
+        val value : Array<String> = arrayOf(
+            "E0","40","30","02","00","E8",
+            "F45084800C","0000000000","F45084800C",
+            "000000000000","999999999999","999999999999"
+        )
+
+        for (i in tag.indices){
+            val b1 : ByteArray = ByteUtils.hexString2ByteArray(tag[i])
+            val b2 : ByteArray = ByteUtils.hexString2ByteArray(value[i])
+            emvHandler!!.setTlv(b1,b2)
+        }
+
+        //Reader CVM Required Limit (Malaysia => RM250)
+        var b1: ByteArray = ByteUtils.hexString2ByteArray("DF8126")
+        var b2: ByteArray = ByteUtils.hexString2ByteArray("000000025000")
+        emvHandler!!.setTlv(b1,b2)
+
+        //9F66 => Terminal Transaction Qualifiers (TTQ)
+        //DF8119 => CVM Capability - No CVM Required
+        if (mCardType == CardSlotTypeEnum.RF && amount.toInt() <= 25000){
+            b1 = ByteUtils.hexString2ByteArray("9F66")
+            b2 = ByteUtils.hexString2ByteArray("B280C080")
+            emvHandler!!.setTlv(b1,b2)
+
+            b1 = ByteUtils.hexString2ByteArray("DF8119")
+            b2 = ByteUtils.hexString2ByteArray("08")
+            emvHandler!!.setTlv(b1,b2)
+        }else{
+            b1 = ByteUtils.hexString2ByteArray("DF8119")
+            b2 = ByteUtils.hexString2ByteArray("40")
+            emvHandler!!.setTlv(b1,b2)
+        }
     }
 
 
